@@ -1,0 +1,80 @@
+package com.github.seanparsons.datastores
+
+import scalaz._
+import Scalaz._
+import scalaz.IterV._
+import scalaz.effects._
+import java.io._
+import scala.annotation.tailrec
+
+case class SSTable[T, U](file: File)(implicit keyOrder: Order[T], keyFixedSerDe: FixedSizeSerDe[T], valueFixedSerDe: FixedSizeSerDe[U]) {
+  def write(contents: Map[T, U]): IO[Unit] = {
+    io {
+      val outputStream = new FileOutputStream(file)
+      try {
+        contents.keySet.toSeq.sortWith(keyOrder.order(_, _) == LT).foreach{key =>
+          outputStream.write(keyFixedSerDe.serialize(key))
+          outputStream.write(valueFixedSerDe.serialize(contents(key)))
+        }
+      } finally {
+        outputStream.close()
+      }
+    }
+  }
+	
+  def read(): IO[Map[T, U]] = {
+    io {
+      val inputStream = new FileInputStream(file)
+      val keyArray = Array.ofDim[Byte](keyFixedSerDe.size)
+      val valueArray = Array.ofDim[Byte](valueFixedSerDe.size)
+      @tailrec
+      def readPair(current: Map[T, U]): Map[T, U] = {
+        val keySizeRead = inputStream.read(keyArray)
+        if (keySizeRead == -1) {
+          current
+        } else {
+          keySizeRead.ensuring(keySizeRead == keyFixedSerDe.size, "Invalid amount of bytes read for key.")
+          val valueSizeRead = inputStream.read(valueArray)
+          valueSizeRead.ensuring(valueSizeRead == valueFixedSerDe.size, "Invalid amount of bytes read for value.")
+          readPair(current + (keyFixedSerDe.deserialize(keyArray) -> valueFixedSerDe.deserialize(valueArray)))
+        }
+      }
+      try {
+        readPair(Map())
+      } finally {
+        inputStream.close()
+      }
+    }
+  }
+  
+  private[this] def readBytes(inputStream: InputStream, length: Int): IO[(Array[Byte], Boolean)] = {
+    val bytes: Array[Byte] = Array.ofDim[Byte](length)
+    io{
+      val readAmount = inputStream.read(bytes)
+      (bytes, readAmount == length)
+    }
+  }
+  
+  def enumerateEntries[A](it: IterV[(T, U), A]): IO[IterV[(T, U), A]] = {
+    io(new FileInputStream(file))
+      .bracket((inputStream) => io(inputStream.close()))((inputStream) => enumerateEntries(inputStream, it))
+  }
+  
+  private[this] def enumerateEntries[A](inputStream: InputStream, it: IterV[(T, U), A]): IO[IterV[(T, U), A]] = {
+    def loop: IterV[(T, U), A] => IO[IterV[(T, U), A]] = {
+      case i@Done(_, _) => io(i)
+      case i@Cont(transform) => for {
+        keyAndFullyRead <- readBytes(inputStream, keyFixedSerDe.size).map(pair => pair.copy(_1 = keyFixedSerDe.deserialize(pair._1)))
+        valueAndFullyRead <- readBytes(inputStream, valueFixedSerDe.size).map(pair => pair.copy(_1 = valueFixedSerDe.deserialize(pair._1)))
+        result <- if(keyAndFullyRead._2 && valueAndFullyRead._2) loop(transform(El((keyAndFullyRead._1, valueAndFullyRead._1)))) else io(i)
+      } yield result
+    }
+    loop(it)
+  }
+  
+  def merge(withTable: SSTable[T, U], toTable: SSTable[T, U]): IO[Unit] = {
+    for {
+      entriesFromThis <- enumerateEntries
+    }
+  }
+}

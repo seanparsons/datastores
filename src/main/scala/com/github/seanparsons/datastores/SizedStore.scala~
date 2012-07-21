@@ -1,0 +1,48 @@
+package com.github.seanparsons.datastores
+
+import scalaz._
+import Scalaz._
+import scalaz.effects._
+import java.io._
+
+trait FixedSize[T] {
+  def size: Int
+}
+
+trait FixedSizes {
+  def fixedSize[T](fixedSize: Int): FixedSize[T] = new FixedSize[T] {
+    val size = fixedSize
+  }
+  implicit val longFixedSize: FixedSize[Long] = fixedSize(8)
+  implicit val intFixedSize: FixedSize[Int] = fixedSize(4)
+  implicit val shortFixedSize: FixedSize[Short] = fixedSize(2)
+  implicit val byteFixedSize: FixedSize[Byte] = fixedSize(1)
+  implicit val booleanFixedSize: FixedSize[Boolean] = fixedSize(1)
+}
+
+case class FixedSizeIndexedStore[T](file: File) extends Closeable {
+  val randomAccess = new RandomAccessFile(file, "rws")
+  
+  def close() = randomAccess.close()
+  
+  @inline
+  private[this] def calculateFilePosition(index: Long)(implicit fixedSize: FixedSize[T]): Long = index * fixedSize.size.toLong
+  
+  def write(index: Long, value: T)(implicit fixedSize: FixedSize[T], serializer: Serializer[T]): IO[Unit] = {
+    val filePosition: Long = calculateFilePosition(index)
+    val bytes: Array[Byte] = serializer.serialize(value)
+    io{
+      randomAccess.seek(filePosition)
+      randomAccess.write(bytes)
+    }
+  }
+  def read(index: Long)(implicit fixedSize: FixedSize[T], deserializer: Deserializer[T]): IO[T] = {
+    val filePosition: Long = calculateFilePosition(index)
+    val bytes: Array[Byte] = Array.ofDim(fixedSize.size)
+    io {
+      randomAccess.seek(filePosition)
+      randomAccess.readFully(bytes, 0, fixedSize.size)
+      deserializer.deserialize(bytes)
+    }
+  }
+}

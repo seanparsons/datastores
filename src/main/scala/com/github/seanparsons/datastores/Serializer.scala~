@@ -1,0 +1,79 @@
+package com.github.seanparsons.datastores
+
+import java.nio._
+
+trait Serializers {
+  def serializer[T](serializeFunction: (T) => Array[Byte]): Serializer[T] = new Serializer[T] {
+    def serialize(value: T): Array[Byte] = serializeFunction(value)
+  }
+  implicit val longSerializer: Serializer[Long] = serializer((value: Long) =>
+    Array[Byte](
+      (value >> 56).toByte,
+      (value >> 48).toByte,
+      (value >> 40).toByte,
+      (value >> 32).toByte,
+      (value >> 24).toByte,
+      (value >> 16).toByte,
+      (value >> 8).toByte,
+      value.toByte
+    )
+  )
+  implicit val intSerializer: Serializer[Int] = serializer((value: Int) => 
+    Array[Byte](
+      (value >>> 24).toByte, 
+      (value >>> 16).toByte, 
+      (value >>> 8).toByte, 
+      value.toByte
+    )
+  )
+  implicit val shortSerializer: Serializer[Short] = serializer((value: Short) =>
+    Array[Byte](
+      (value >>> 8.toShort).toByte,
+      value.toByte
+    )
+  )
+  implicit val byteSerializer: Serializer[Byte] = serializer((value: Byte) => Array(value))
+  implicit val booleanSerializer: Serializer[Boolean] = serializer((value: Boolean) =>
+    Array[Byte](
+      if(value) 1.toByte else 0.toByte
+    )
+  )
+}
+
+trait Deserializers {
+  def deserializer[T](deserializeFunction: (Seq[Byte]) => T): Deserializer[T] = new Deserializer[T] {
+    def deserialize(bytes: Seq[Byte]): T = deserializeFunction(bytes)
+  }
+  implicit val longDeserializer: Deserializer[Long] = deserializer((bytes: Seq[Byte]) =>
+    (bytes(0) & 0xFFL) << 56
+    | (bytes(1) & 0xFFL) << 48
+    | (bytes(2) & 0xFFL) << 40
+    | (bytes(3) & 0xFFL) << 32
+    | (bytes(4) & 0xFFL) << 24
+    | (bytes(5) & 0xFFL) << 16
+    | (bytes(6) & 0xFFL) << 8
+    | (bytes(7) & 0xFFL)
+  )
+  implicit val intDeserializer: Deserializer[Int] = deserializer((bytes: Seq[Byte]) =>
+    bytes(0) << 24 
+    | (bytes(1) & 0xFF) << 16 
+    | (bytes(2) & 0xFF) << 8 
+    | (bytes(3) & 0xFF)
+  )
+  implicit val shortDeserializer: Deserializer[Short] = deserializer((bytes: Seq[Byte]) =>
+    ((bytes(0) << 8) | (bytes(1) & 0xFF)).toShort    
+  )
+  implicit val byteDeserializer: Deserializer[Byte] = deserializer((bytes: Seq[Byte]) => bytes(0))
+  implicit val booleanDeserializer: Deserializer[Boolean] = deserializer((bytes: Seq[Byte]) =>
+    if (bytes(0) == 1.toByte) true else false
+  )
+}
+
+trait Serializer[T] {
+  def serialize(value: T): Array[Byte]
+}
+
+trait Deserializer[T] {
+  def deserialize(bytes: Seq[Byte]): T
+}
+
