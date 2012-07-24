@@ -12,6 +12,7 @@ import Scalaz.{mapOrder => _, _}
 import scala.math.Numeric.Implicits
 import org.specs2.{Specification, ScalaCheck}
 import java.io.File
+import scalaz.concurrent.Strategy
 
 case class SSTableSpecification() extends Specification 
                                   with ScalaCheck 
@@ -23,10 +24,11 @@ case class SSTableSpecification() extends Specification
     "SSTable" ^
       "Map[Long, Long]" !
         forAllNoShrink(arbitrary[Map[Long, Long]]){(contents) =>
+          implicit val strategy = Strategy.Sequential
       	  withTempFile{file =>
       	    val store = new FileSSTable[Long, Long](file)
-      	    store.write(contents).unsafePerformIO
-      	    val deserialized: Map[Long, Long] = store.read().unsafePerformIO
+      	    store.write(contents).get
+      	    val deserialized: Map[Long, Long] = store.read().get
       	    ("deserialized = " + deserialized) |: deserialized === contents
       	  }
       	} ^ end
